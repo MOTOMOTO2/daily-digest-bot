@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import re
 import sys
-from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +27,9 @@ class FileChannel(Channel):
 
     def send(self, subject: str, markdown: str, *, client: httpx.Client | None = None) -> dict[str, Any]:
         directory = Path(self.config.path)
-        stem = f"{date.today().isoformat()}-{slugify(subject)}"
+        # The subject already carries the digest date, in the bot's configured
+        # timezone; prefixing the local date too would contradict it.
+        stem = slugify(subject)
         try:
             directory.mkdir(parents=True, exist_ok=True)
             target = self._free_path(directory, stem)

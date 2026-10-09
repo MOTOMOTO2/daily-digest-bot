@@ -146,7 +146,13 @@ def assess(config: Config, store: Store, *, now: datetime | None = None) -> Heal
     elif last_run["status"] == "partial":
         checks.append(Check("last_run", DEGRADED, "last run completed with source failures"))
     else:
-        checks.append(Check("last_run", OK, f"last run ok at {last_run.get('finished_at')}"))
+        finished = parse_iso(last_run.get("finished_at"))
+        when = (
+            finished.astimezone(ZoneInfo(config.bot.timezone)).strftime("%Y-%m-%d %H:%M %Z")
+            if finished
+            else "an unknown time"
+        )
+        checks.append(Check("last_run", OK, f"last run ok at {when}"))
 
     # --- per-source health ---------------------------------------------
     sources: list[dict[str, Any]] = []
