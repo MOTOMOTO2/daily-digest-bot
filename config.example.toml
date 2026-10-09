@@ -1,0 +1,106 @@
+# daily-digest-bot configuration.
+#
+# Copy to config.toml and edit. Secrets belong in .env, not here: any
+# ${VAR} is read from the environment, and a missing variable is a hard
+# error rather than a quietly empty webhook.
+
+[bot]
+timezone = "America/Toronto"
+# Earliest local time the day's digest may go out. Run the bot on a short
+# cron (hourly is fine); it collects every time and posts once, after this.
+send_after = "08:00"
+title = "Daily Digest"
+max_items_per_digest = 30
+max_items_per_source = 10
+# Items published longer ago than this are recorded for deduplication but
+# never posted, so a backlog cannot dump 400 old links into one digest.
+lookback_hours = 72
+# Post even when there is nothing new. Keep this true: it is what makes a
+# silent channel mean "the bot is broken" instead of "a slow news day".
+post_when_empty = true
+# healthcheck exits non-zero when no digest has landed in this many hours.
+max_silence_hours = 26
+# A source failing this many times in a row marks the bot unhealthy.
+unhealthy_after_consecutive_failures = 3
+# "url" collapses the same link; "title" also collapses the same story
+# arriving from two different sources.
+dedupe_by = ["url", "title"]
+
+[paths]
+database = "data/digest.db"
+log_file = "logs/digest-bot.log"
+log_level = "INFO"
+log_max_bytes = 5000000
+log_backups = 5
+
+# --------------------------------------------------------------------------
+# Where the digest goes.
+# kind = "slack" | "discord" | "webhook" | "file" | "stdout"
+# --------------------------------------------------------------------------
+[delivery]
+kind = "slack"
+webhook_url = "${SLACK_WEBHOOK_URL}"
+channel = "#daily-digest"
+timeout_seconds = 20
+
+# Second channel, used only to shout when the digest itself cannot be
+# delivered. Point it somewhere different from [delivery] -- a channel that
+# is down cannot report that it is down.
+[alerts]
+enabled = false
+kind = "slack"
+webhook_url = "${ALERT_WEBHOOK_URL:-}"
+channel = "#bot-alerts"
+
+# --------------------------------------------------------------------------
+# Sources. Add as many [[sources]] blocks as you like; `name` must be unique
+# and is the key the local record and the dashboard use.
+# --------------------------------------------------------------------------
+
+# 1. An RSS or Atom feed.
+[[sources]]
+name = "hacker-news"
+kind = "rss"
+url = "https://hnrss.org/frontpage"
+label = "Hacker News front page"
+max_items = 10
+# Optional case-insensitive substring filters over "title + summary".
+# include = ["python", "rust"]
+exclude = ["hiring"]
+
+# 2. A JSON API. `items_path` is a dotted path to the list ("" = the body is
+#    the list); `fields` maps digest fields to dotted paths inside each item.
+[[sources]]
+name = "cpython-releases"
+kind = "api"
+url = "https://api.github.com/repos/python/cpython/releases"
+label = "CPython releases"
+method = "GET"
+max_items = 5
+items_path = ""
+headers = { Accept = "application/vnd.github+json" }
+# params = { per_page = "10" }
+
+[sources.fields]
+id = "id"
+title = "name"
+url = "html_url"
+summary = "body"
+author = "author.login"
+published_at = "published_at"
+
+# 3. A page to scrape. `selectors.item` picks each row; the rest select
+#    inside a row. Append "@attr" to read an attribute, so "a@href" is a link.
+[[sources]]
+name = "python-blog"
+kind = "scrape"
+url = "https://blog.python.org/"
+label = "Python Insider"
+max_items = 5
+
+[sources.selectors]
+item = "div.post"
+title = "h3.post-title a"
+url = "h3.post-title a@href"
+summary = "div.post-body"
+published_at = "abbr.published@title"

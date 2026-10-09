@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+.pytest_cache/
+
+# Local state — the bot's own record and log live here, never in git
+data/
+logs/
+
+# Secrets and local config
+.env
+config.toml
+
+# Node / dashboard
+node_modules/
+dashboard/dist/
+dashboard/node_modules/
+*.local
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
