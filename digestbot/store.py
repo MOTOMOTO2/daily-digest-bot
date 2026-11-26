@@ -125,6 +125,14 @@ class StoreError(Exception):
     """Raised when the local record cannot be opened or migrated."""
 
 
+class StoreConflict(StoreError):
+    """A uniqueness rule refused a write, e.g. a second digest for the same day.
+
+    SQLite reports this as ``sqlite3.IntegrityError``; DynamoDB as a cancelled
+    transaction, which :class:`digestbot.dynamo.DynamoStore` raises as this.
+    """
+
+
 def _row_factory(cursor: sqlite3.Cursor, row: tuple[Any, ...]) -> sqlite3.Row:
     return sqlite3.Row(cursor, row)
 
@@ -633,4 +641,22 @@ def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
     return data
 
 
-__all__ = ["Store", "StoreError", "row_to_dict", "parse_iso", "SCHEMA_VERSION"]
+def open_store(location: str | Path) -> Store:
+    """Open the record named by ``[paths] database``.
+
+    ``dynamodb://<table>`` opens the DynamoDB store (see dynamo.py); anything
+    else is a SQLite file path. boto3 is only imported when DynamoDB is used.
+    """
+    text = str(location)
+    if text.startswith("dynamodb://"):
+        from .dynamo import DynamoStore
+
+        return DynamoStore.from_url(text)  # type: ignore[return-value]
+    if text.lower().startswith("dynamodb:"):
+        # Otherwise "dynamodb:/table" would quietly become a SQLite file in a
+        # folder called "dynamodb:".
+        raise StoreError(f"{text!r} is not a DynamoDB URL; write it as dynamodb://<table>")
+    return Store(location)
+
+
+__all__ = ["Store", "StoreError", "StoreConflict", "open_store", "row_to_dict", "parse_iso", "SCHEMA_VERSION"]

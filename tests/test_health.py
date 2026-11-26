@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import pytest
+
 from datetime import timedelta
 from pathlib import Path
 
 from digestbot.config import Config
 from digestbot.health import DEGRADED, DOWN, OK, UNKNOWN, assess
 from digestbot.models import SourceOutcome, utcnow
-from digestbot.store import Store
+from digestbot.store import Store, open_store
 from tests.factories import make_config
 
 
@@ -38,6 +40,7 @@ def test_recent_digest_is_healthy(config: Config, store: Store) -> None:
     assert report.hours_since_digest is not None and report.hours_since_digest < 1
 
 
+@pytest.mark.sqlite_only
 def test_silence_past_the_limit_is_degraded_then_down(config: Config, store: Store) -> None:
     digest_id = store.create_digest(digest_date="2025-10-01", channel="#c", title="T")
     store.mark_digest_sent(digest_id, sent_at=utcnow() - timedelta(hours=30))
@@ -94,7 +97,7 @@ def test_disabled_source_is_not_a_problem(tmp_path: Path) -> None:
             {"name": "off", "kind": "rss", "url": "https://rss.example.com/off.xml", "enabled": False},
         ],
     )
-    store = Store(config.paths.database)
+    store = open_store(config.paths.database)
     try:
         report = assess(config, store)
         off = next(source for source in report.sources if source["source"] == "off")

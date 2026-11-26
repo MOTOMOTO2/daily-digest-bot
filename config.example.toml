@@ -99,8 +99,8 @@ label = "Python Insider"
 max_items = 5
 
 [sources.selectors]
-item = "div.post"
-title = "h3.post-title a"
-url = "h3.post-title a@href"
-summary = "div.post-body"
-published_at = "abbr.published@title"
+item = "article.post-card"
+title = "h3"
+url = "a@href"
+summary = "p"
+published_at = "time@datetime"

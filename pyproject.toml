@@ -17,7 +17,8 @@ dependencies = [
 
 [project.optional-dependencies]
 server = ["fastapi>=0.110", "uvicorn>=0.29"]
-dev = ["pytest>=8.0", "respx>=0.21"]
+aws = ["boto3>=1.34"]
+dev = ["pytest>=8.0", "respx>=0.21", "moto[dynamodb]>=5.0"]
 
 [project.scripts]
 digest-bot = "digestbot.cli:main"
@@ -28,3 +29,4 @@ include = ["digestbot*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 filterwarnings = ["ignore::DeprecationWarning"]
+markers = ["sqlite_only: reads or edits the SQLite file directly, so it does not run against DynamoDB"]

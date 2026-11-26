@@ -27,7 +27,7 @@ from .health import DOWN, assess
 from .logging_setup import attach_store, get_logger, setup_logging
 from .models import utcnow
 from .pipeline import Pipeline
-from .store import Store, StoreError, row_to_dict
+from .store import Store, StoreError, open_store, row_to_dict
 
 EXIT_OK = 0
 EXIT_CRASH = 1
@@ -122,7 +122,7 @@ def _bootstrap(args: argparse.Namespace) -> tuple[Config, Store]:
         backups=config.paths.log_backups,
         quiet=args.quiet or args.json,
     )
-    store = Store(config.paths.database)
+    store = open_store(config.paths.database)
     attach_store(get_logger(), store, level=logging.WARNING)
     return config, store
 

@@ -3,7 +3,8 @@
 Collects items from sources you configure — RSS feeds, JSON APIs, and pages it
 scrapes — deduplicates them against everything it has already sent, and posts
 **one digest a day** to a chat channel. Everything it knows lives in a local
-SQLite file, and when something breaks it says so loudly instead of going quiet.
+SQLite file, or in DynamoDB when it runs on AWS Lambda, and when something
+breaks it says so loudly instead of going quiet.
 
 Python for the bot and its API; React for the dashboard.
 
@@ -183,6 +184,10 @@ than losing the day.
 30 9 * * * cd /srv/digest-bot && .venv/bin/digest-bot healthcheck || curl -fsS "$HEARTBEAT_FAIL_URL"
 ```
 
+**AWS Lambda**, with no machine to keep on: EventBridge Scheduler runs it
+hourly, DynamoDB holds the record, and a CloudWatch alarm emails on failure.
+GitHub Actions deploys it. See [deploy/aws/README.md](deploy/aws/README.md).
+
 **Windows Task Scheduler:**
 
 ```powershell
@@ -281,6 +286,17 @@ An item with `digest_id IS NULL` is collected but unsent. An item that aged past
 `lookback_hours` before any digest went out gets `expired_at` set — recorded
 forever for dedupe, never posted.
 
+### Or DynamoDB
+
+Set `database = "dynamodb://<table>"` and the same record lives in one DynamoDB
+table (`pip install -e ".[aws]"`). DynamoDB has no UNIQUE constraints, so each
+guarantee above is rebuilt from its own primitives: the fingerprint and the
+digest date are claimed by marker records written in a conditional
+transaction, ids come from an atomic counter, and the unsent queue is a sparse
+index that only pending items appear in. The mapping is in
+[`digestbot/dynamo.py`](digestbot/dynamo.py) and
+[deploy/aws/README.md](deploy/aws/README.md#the-dynamodb-design).
+
 ## Project layout
 
 ```
@@ -289,6 +305,8 @@ digestbot/
   config.py        TOML + ${ENV}, validated strictly (unknown keys are errors)
   pipeline.py      collect → dedupe → build → deliver, and the failure policy
   store.py         SQLite; the UNIQUE constraints that enforce the guarantees
+  dynamo.py        the same record in DynamoDB: conditional writes for the guarantees
+  aws_lambda.py    the Lambda entry point: scheduled runs and health checks
   models.py        Item, fingerprinting, URL canonicalisation
   render.py        the digest body, including the "Collection problems" section
   health.py        silence detection and per-source health
@@ -296,15 +314,17 @@ digestbot/
   api.py           read-only FastAPI for the dashboard
   sources/         rss.py, api.py, scrape.py behind a small registry
   delivery/        slack.py, discord.py, webhook.py, file.py (+stdout)
+deploy/aws/        CloudFormation, the Lambda build, and the deploy runbook
 dashboard/         React + TypeScript + Vite
 scripts/demo.py    end-to-end demo against a throwaway local server
-tests/             188 tests
+tests/             248 tests
 ```
 
 ## Tests
 
 ```bash
-pytest -q                            # 188 tests, ~4s, no network
+pytest -q                            # 248 tests, no network: the shared ones run
+                                     # on SQLite and on DynamoDB (simulated by moto)
 cd dashboard && npm run build        # type-check + build
 python scripts/demo.py               # end-to-end over real HTTP
 ```

@@ -9,7 +9,7 @@ import respx
 from digestbot.config import Config
 from digestbot.logging_setup import setup_logging
 from digestbot.pipeline import Pipeline
-from digestbot.store import Store
+from digestbot.store import Store, open_store
 from tests.factories import API_FIXTURE, HTML_FIXTURE, RSS_FIXTURE, make_config
 
 FEED_URL = "https://rss.example.com/feed.xml"
@@ -26,7 +26,7 @@ def mock_all_sources_ok() -> None:
 def pipeline_for(config: Config) -> tuple[Pipeline, Store]:
     """Wire up logging exactly the way the CLI does, so log assertions are real."""
     setup_logging(log_file=config.paths.log_file, level="DEBUG", console=False)
-    store = Store(config.paths.database)
+    store = open_store(config.paths.database)
     return Pipeline(config, store), store
 
 
@@ -107,7 +107,7 @@ def test_second_run_sends_nothing_new(config: Config) -> None:
 
 
 @respx.mock
-def test_same_story_from_two_sources_is_deduplicated_by_title(config: Config) -> None:
+def test_same_story_from_two_sources_is_deduplicated_by_title(config: Config, tmp_path: Path) -> None:
     duplicate_feed = RSS_FIXTURE.replace(
         "https://example.com/first?utm_source=rss", "https://mirror.example.net/first"
     ).replace("example-1", "mirror-1")
@@ -117,7 +117,9 @@ def test_same_story_from_two_sources_is_deduplicated_by_title(config: Config) ->
     )
 
     config = make_config(
-        Path(config.paths.database).parent,
+        tmp_path,
+        # Keep this run's database: a SQLite file, or the DynamoDB table.
+        paths={"database": config.paths.database},
         sources=[
             {"name": "feed", "kind": "rss", "url": FEED_URL},
             {"name": "mirror", "kind": "rss", "url": "https://rss.example.com/mirror.xml"},

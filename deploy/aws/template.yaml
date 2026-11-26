@@ -1,0 +1,150 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  daily-digest-bot on AWS: a Lambda function run hourly by EventBridge
+  Scheduler, its record in one DynamoDB table, and a CloudWatch alarm that
+  emails when a run or the daily health check fails. Sized for the free tier.
+
+Parameters:
+  DeliveryKind:
+    Type: String
+    Default: stdout
+    AllowedValues: [stdout, slack, discord, webhook]
+    Description: Where the digest goes. stdout writes it to the function's log.
+  WebhookParameter:
+    Type: String
+    Default: ""
+    Description: >
+      Name of an SSM SecureString parameter holding the webhook URL, starting
+      with a slash, e.g. /daily-digest-bot/webhook-url. Empty for stdout.
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: Address the failure alarm emails. Empty creates the alarm with no email.
+  RetentionDays:
+    Type: Number
+    Default: 90
+    MinValue: 1
+    Description: Days to keep runs and events before DynamoDB's TTL deletes them. Items are kept forever.
+
+Conditions:
+  HasWebhook: !Not [!Equals [!Ref WebhookParameter, ""]]
+  HasAlarmEmail: !Not [!Equals [!Ref AlarmEmail, ""]]
+
+Resources:
+  # Single-table design: see digestbot/dynamo.py for what lives under which key.
+  DigestTable:
+    Type: AWS::DynamoDB::Table
+    # The table is the bot's memory of what it has already sent. Deleting the
+    # stack must not wipe it, or the next digest would repeat old items.
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - { AttributeName: pk, AttributeType: S }
+        - { AttributeName: sk, AttributeType: S }
+        - { AttributeName: gsi1pk, AttributeType: S }
+        - { AttributeName: gsi1sk, AttributeType: S }
+      KeySchema:
+        - { AttributeName: pk, KeyType: HASH }
+        - { AttributeName: sk, KeyType: RANGE }
+      GlobalSecondaryIndexes:
+        - IndexName: gsi1
+          KeySchema:
+            - { AttributeName: gsi1pk, KeyType: HASH }
+            - { AttributeName: gsi1sk, KeyType: RANGE }
+          Projection: { ProjectionType: ALL }
+      TimeToLiveSpecification:
+        AttributeName: expires_at
+        Enabled: true
+
+  DigestFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Description: Collects from every source hourly and posts one digest a day.
+      CodeUri: ../../build/lambda
+      Handler: digestbot.aws_lambda.handler
+      Runtime: python3.13
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 120
+      # No reserved concurrency: new accounts may only have 10, and AWS refuses
+      # to reserve any of those. Overlapping runs stay correct regardless,
+      # because the table's conditional writes claim each item and each day once.
+      Environment:
+        Variables:
+          DIGEST_CONFIG: config.toml
+          DIGEST_DATABASE: !Sub "dynamodb://${DigestTable}"
+          DIGEST_DELIVERY_KIND: !Ref DeliveryKind
+          DIGEST_RETENTION_DAYS: !Ref RetentionDays
+          SSM_DIGEST_WEBHOOK_URL: !If [HasWebhook, !Ref WebhookParameter, ""]
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref DigestTable
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action: ssm:GetParameters
+              # Without a webhook there is nothing to read; the ARN names no parameter.
+              Resource: !If
+                - HasWebhook
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${WebhookParameter}"
+                - !Sub "arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter/daily-digest-bot/none"
+      Events:
+        Hourly:
+          Type: ScheduleV2
+          Properties:
+            Description: Collect, and post once the day's send window opens.
+            ScheduleExpression: rate(1 hour)
+            Input: '{"mode": "run"}'
+            RetryPolicy:
+              MaximumRetryAttempts: 0
+        DailyHealthcheck:
+          Type: ScheduleV2
+          Properties:
+            Description: Fail loudly if no digest went out or a source keeps failing.
+            ScheduleExpression: cron(30 9 * * ? *)
+            ScheduleExpressionTimezone: America/Toronto
+            Input: '{"mode": "healthcheck"}'
+            RetryPolicy:
+              MaximumRetryAttempts: 0
+
+  DigestLogs:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${DigestFunction}"
+      RetentionInDays: 30
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Condition: HasAlarmEmail
+    Properties:
+      Subscription:
+        - Protocol: email
+          Endpoint: !Ref AlarmEmail
+
+  # A failed run, a failed delivery and a DOWN health check all fail the
+  # invocation (see digestbot/aws_lambda.py), so one alarm covers all three.
+  FailureAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: daily-digest-bot failed a run or its health check.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref DigestFunction
+      Statistic: Sum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: !If [HasAlarmEmail, [!Ref AlarmTopic], !Ref AWS::NoValue]
+
+Outputs:
+  FunctionName:
+    Value: !Ref DigestFunction
+  TableName:
+    Value: !Ref DigestTable

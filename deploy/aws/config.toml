@@ -1,0 +1,81 @@
+# The configuration the AWS Lambda deployment runs with (see deploy/aws/README.md).
+#
+# Nothing secret lives here. The Lambda sets DIGEST_DATABASE to the DynamoDB
+# table, and the webhook comes from an SSM SecureString parameter, exported as
+# DIGEST_WEBHOOK_URL by digestbot/aws_lambda.py before this file is read.
+# Until a webhook is configured, the digest goes to the function's log.
+
+[bot]
+timezone = "America/Toronto"
+send_after = "08:00"
+title = "Daily Digest"
+max_items_per_digest = 30
+max_items_per_source = 8
+lookback_hours = 48
+post_when_empty = true
+max_silence_hours = 26
+unhealthy_after_consecutive_failures = 3
+dedupe_by = ["url", "title"]
+
+[paths]
+database = "${DIGEST_DATABASE}"
+# CloudWatch Logs collects stdout and stderr; there is no file to write.
+log_file = ""
+log_level = "INFO"
+
+[delivery]
+kind = "${DIGEST_DELIVERY_KIND:-stdout}"
+webhook_url = "${DIGEST_WEBHOOK_URL:-}"
+channel = "#daily-digest"
+timeout_seconds = 20
+
+[alerts]
+# Failures already fail the invocation, and the stack's CloudWatch alarm
+# emails about those, so a second chat channel is optional here.
+enabled = false
+
+[[sources]]
+name = "hacker-news"
+kind = "rss"
+url = "https://hnrss.org/frontpage"
+label = "Hacker News front page"
+max_items = 8
+exclude = ["hiring"]
+
+[[sources]]
+name = "aws-whats-new"
+kind = "rss"
+url = "https://aws.amazon.com/about-aws/whats-new/recent/feed/"
+label = "What's New with AWS"
+max_items = 6
+
+[[sources]]
+name = "show-hn"
+kind = "api"
+url = "https://hn.algolia.com/api/v1/search_by_date"
+label = "Show HN, 50+ points"
+max_items = 5
+items_path = "hits"
+params = { tags = "show_hn", numericFilters = "points>50", hitsPerPage = "20" }
+
+[sources.fields]
+id = "objectID"
+title = "title"
+url = "url"
+author = "author"
+published_at = "created_at"
+
+[[sources]]
+name = "python-blog"
+kind = "scrape"
+url = "https://blog.python.org/"
+label = "Python Insider"
+max_items = 4
+
+# The blog was redesigned in 2026: each post is now an <article class="post-card">.
+[sources.selectors]
+item = "article.post-card"
+title = "h3"
+url = "a@href"
+summary = "p"
+published_at = "time@datetime"

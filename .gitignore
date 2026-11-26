@@ -12,6 +12,12 @@ logs/
 # Secrets and local config
 .env
 config.toml
+# ...except the AWS deployment's, which holds no secrets (they come from SSM).
+!deploy/aws/config.toml
+
+# AWS Lambda build output (deploy/aws/build.sh) and packaged templates
+build/
+packaged.yaml
 
 # Node / dashboard
 node_modules/

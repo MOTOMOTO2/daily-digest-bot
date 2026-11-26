@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from .config import Config, ConfigError, load_config
 from .health import assess
-from .store import Store, row_to_dict
+from .store import Store, open_store, row_to_dict
 
 DEFAULT_CONFIG_PATH = os.environ.get("DIGEST_BOT_CONFIG", "config.toml")
 # Dev server origins for `npm run dev`.
@@ -57,7 +57,7 @@ def create_app(config_path: str | None = None) -> FastAPI:
             raise HTTPException(status_code=500, detail=f"configuration error: {exc}") from exc
 
     def get_store(config: Config = Depends(get_config)) -> Iterator[Store]:
-        store = Store(config.paths.database)
+        store = open_store(config.paths.database)
         try:
             yield store
         finally:

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from digestbot.models import Item, SourceOutcome, utcnow
-from digestbot.store import Store
+from digestbot.store import Store, StoreConflict
 
 
 def item(title: str, url: str | None = None, **kwargs) -> Item:
@@ -21,6 +21,7 @@ def test_add_item_is_idempotent_on_fingerprint(store: Store) -> None:
     assert store.total_items() == 1
 
 
+@pytest.mark.sqlite_only
 def test_fingerprint_unique_constraint_is_the_authority(store: Store) -> None:
     one = item("A post", "https://example.com/a")
     store.add_item(one, "fixed-fingerprint")
@@ -95,7 +96,7 @@ def test_expire_stale_pending(store: Store) -> None:
 
 def test_one_digest_per_day_is_enforced_by_the_schema(store: Store) -> None:
     store.create_digest(digest_date="2025-10-08", channel="#c", title="T")
-    with pytest.raises(sqlite3.IntegrityError):
+    with pytest.raises((sqlite3.IntegrityError, StoreConflict)):
         store.create_digest(digest_date="2025-10-08", channel="#c", title="T")
 
 
@@ -188,6 +189,7 @@ def test_events_are_recorded_and_counted(store: Store) -> None:
     assert store.count_events_since(utcnow() + timedelta(hours=1)) == 0
 
 
+@pytest.mark.sqlite_only
 def test_prune_keeps_fingerprints(store: Store) -> None:
     one = item("A post", "https://example.com/a", raw={"big": "payload"})
     store.add_item(one, one.fingerprint(["url"]))
@@ -217,6 +219,7 @@ def test_store_reopen_is_safe(tmp_path) -> None:
     second.close()
 
 
+@pytest.mark.sqlite_only
 def test_transaction_rolls_back(store: Store) -> None:
     with pytest.raises(RuntimeError):
         with store.transaction():

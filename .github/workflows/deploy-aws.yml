@@ -1,0 +1,79 @@
+name: Test & deploy to AWS
+
+# Tests run on every push and pull request. Pushes to main also deploy to AWS
+# once the repository variables from deploy/aws/README.md are set; until then
+# the deploy job is skipped, not failed.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write # lets the deploy job trade GitHub's OIDC token for AWS credentials
+
+concurrency:
+  group: aws-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -e ".[dev,server,aws]"
+      # Runs the shared tests against SQLite and against DynamoDB (moto).
+      - run: pytest -q
+
+  deploy:
+    needs: test
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    runs-on: ubuntu-latest
+    env:
+      STACK: daily-digest-bot
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Build the Lambda bundle
+        run: deploy/aws/build.sh
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy the stack
+        run: |
+          aws cloudformation package \
+            --template-file deploy/aws/template.yaml \
+            --s3-bucket "${{ vars.AWS_ARTIFACT_BUCKET }}" \
+            --s3-prefix "$STACK" \
+            --output-template-file packaged.yaml
+          aws cloudformation deploy \
+            --template-file packaged.yaml \
+            --stack-name "$STACK" \
+            --capabilities CAPABILITY_IAM CAPABILITY_AUTO_EXPAND \
+            --no-fail-on-empty-changeset \
+            --parameter-overrides \
+              "DeliveryKind=${{ vars.DIGEST_DELIVERY_KIND || 'stdout' }}" \
+              "WebhookParameter=${{ vars.DIGEST_WEBHOOK_PARAMETER }}" \
+              "AlarmEmail=${{ vars.DIGEST_ALARM_EMAIL }}"
+
+      - name: Smoke-test the deployed function
+        run: |
+          function=$(aws cloudformation describe-stacks --stack-name "$STACK" \
+            --query "Stacks[0].Outputs[?OutputKey=='FunctionName'].OutputValue" --output text)
+          aws lambda invoke --function-name "$function" \
+            --cli-binary-format raw-in-base64-out --payload '{"mode": "run"}' \
+            response.json > invoke.json
+          cat response.json; echo
+          # A handled run that raised shows up as FunctionError, not a CLI failure.
+          if grep -q FunctionError invoke.json; then cat invoke.json; exit 1; fi
