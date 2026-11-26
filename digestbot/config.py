@@ -223,7 +223,7 @@ class BotConfig(Strict):
     max_silence_hours: int = Field(default=26, ge=1)
     unhealthy_after_consecutive_failures: int = Field(default=3, ge=1)
     dedupe_by: list[Literal["url", "title"]] = Field(default_factory=lambda: ["url", "title"])
-    user_agent: str = "daily-digest-bot/1.0 (+https://github.com/MOTOMOTO2/daily-digest-bot)"
+    user_agent: str = "daily-digest-bot/1.0 (+https://github.com/adenyadegar/daily-digest-bot)"
 
     @field_validator("send_after")
     @classmethod
